@@ -1,0 +1,40 @@
+#include <windows.h>
+#include "resource.h"
+
+#pragma code_page(65001)
+
+IDD_MAIN DIALOGEX 0, 0, 330, 132
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "YouTube no Winamp"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT "Link do YouTube:", -1, 10, 10, 120, 8
+    EDITTEXT IDC_URL, 10, 20, 310, 14, ES_AUTOHSCROLL
+    LTEXT "Cole um link do YouTube e escolha Tocar agora ou Adicionar à playlist.", IDC_STATUS, 10, 40, 310, 18
+    PUSHBUTTON "Tocar agora", IDC_PLAY, 10, 62, 80, 16, BS_DEFPUSHBUTTON
+    PUSHBUTTON "Adicionar à playlist", IDC_ENQUEUE, 96, 62, 100, 16
+    PUSHBUTTON "Colar", IDC_PASTE, 202, 62, 50, 16
+    PUSHBUTTON "Fechar", IDCANCEL, 258, 62, 62, 16
+    PUSHBUTTON "Tocar ao vivo", IDC_LIVE, 10, 86, 80, 16
+    PUSHBUTTON "Parar ao vivo", IDC_STOP_LIVE, 96, 86, 80, 16
+    PUSHBUTTON "Configurações...", IDC_SETTINGS_BTN, 182, 86, 92, 16
+    LTEXT "Download em cache ou transmissão ao vivo pela rede local.", -1, 10, 110, 310, 8
+END
+
+IDD_SETTINGS DIALOGEX 0, 0, 330, 150
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Configurações - YouTube no Winamp"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT "yt-dlp.exe (obrigatório):", -1, 10, 10, 200, 8
+    EDITTEXT IDC_YTDLP, 10, 20, 250, 14, ES_AUTOHSCROLL
+    PUSHBUTTON "Procurar...", IDC_YTDLP_BROWSE, 266, 20, 54, 14
+    LTEXT "ffmpeg.exe (conversão e transmissão ao vivo):", -1, 10, 42, 250, 8
+    EDITTEXT IDC_FFMPEG, 10, 52, 250, 14, ES_AUTOHSCROLL
+    PUSHBUTTON "Procurar...", IDC_FFMPEG_BROWSE, 266, 52, 54, 14
+    PUSHBUTTON "Detectar automaticamente", IDC_AUTODETECT, 10, 76, 130, 16
+    PUSHBUTTON "Limpar cache", IDC_CACHE_CLEAR, 146, 76, 90, 16
+    LTEXT "Deixe um campo vazio para usar a busca automática.", -1, 10, 98, 310, 8
+    DEFPUSHBUTTON "OK", IDOK, 220, 124, 50, 16
+    PUSHBUTTON "Cancelar", IDCANCEL, 276, 124, 44, 16
+END
