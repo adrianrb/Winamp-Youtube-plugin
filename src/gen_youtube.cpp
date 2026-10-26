@@ -69,6 +69,8 @@ struct LiveContext;
 static HWND g_mainDialog = nullptr;
 static bool g_jobRunning = false;
 static bool g_jobEnqueue = false;
+static HANDLE g_jobThread = nullptr;
+static HANDLE g_jobStopEvent = nullptr;
 static bool g_winsockReady = false;
 static bool g_liveStarting = false;
 static bool g_liveRunning = false;
@@ -285,7 +287,25 @@ static std::wstring GetCacheRoot() {
 }
 
 static std::wstring QuoteArgument(const std::wstring& value) {
-    return L"\"" + value + L"\"";
+    std::wstring quoted = L"\"";
+    size_t backslashes = 0;
+    for (wchar_t ch : value) {
+        if (ch == L'\\') {
+            ++backslashes;
+            continue;
+        }
+        if (ch == L'"') {
+            quoted.append(backslashes * 2 + 1, L'\\');
+            quoted.push_back(L'"');
+        } else {
+            quoted.append(backslashes, L'\\');
+            quoted.push_back(ch);
+        }
+        backslashes = 0;
+    }
+    quoted.append(backslashes * 2, L'\\');
+    quoted.push_back(L'"');
+    return quoted;
 }
 
 static std::wstring GetExtension(const std::wstring& name) {
@@ -355,8 +375,22 @@ static std::wstring NormalizeUrl(const std::wstring& raw) {
     return url;
 }
 
+static bool HasUnsafeUrlCharacters(const std::wstring& value) {
+    for (wchar_t ch : value) {
+        if (ch <= 0x20 || ch == 0x7F || ch == L'"') {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool IsYouTubeUrl(const std::wstring& url) {
-    std::wstring lower = ToLower(Trim(url));
+    std::wstring value = Trim(url);
+    if (value.empty() || HasUnsafeUrlCharacters(value)) {
+        return false;
+    }
+
+    std::wstring lower = ToLower(value);
     if (!StartsWith(lower, L"http://") && !StartsWith(lower, L"https://")) {
         return false;
     }
@@ -569,6 +603,12 @@ static bool RunProcess(
     DWORD timeoutMs,
     DWORD& exitCode,
     std::wstring& error) {
+    if (g_jobStopEvent != nullptr &&
+        WaitForSingleObject(g_jobStopEvent, 0) == WAIT_OBJECT_0) {
+        error = L"Operação cancelada.";
+        return false;
+    }
+
     SECURITY_ATTRIBUTES security{};
     security.nLength = sizeof(security);
     security.bInheritHandle = TRUE;
@@ -635,12 +675,31 @@ static bool RunProcess(
         return false;
     }
 
-    DWORD wait = WaitForSingleObject(process.hProcess, timeoutMs);
+    HANDLE waitHandles[2] = {process.hProcess, g_jobStopEvent};
+    DWORD handleCount = g_jobStopEvent != nullptr ? 2 : 1;
+    DWORD wait = WaitForMultipleObjects(handleCount, waitHandles, FALSE, timeoutMs);
+    if (wait == WAIT_OBJECT_0 + 1) {
+        TerminateProcess(process.hProcess, 1);
+        WaitForSingleObject(process.hProcess, 5000);
+        exitCode = 1;
+        error = L"Operação cancelada.";
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        return false;
+    }
     if (wait == WAIT_TIMEOUT) {
         TerminateProcess(process.hProcess, 1);
         WaitForSingleObject(process.hProcess, 5000);
         exitCode = 1;
         error = L"O processo excedeu o tempo limite.";
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        return false;
+    }
+    if (wait == WAIT_FAILED) {
+        exitCode = 1;
+        error = L"Falha ao aguardar o processo: " +
+                FormatWin32Error(GetLastError());
         CloseHandle(process.hThread);
         CloseHandle(process.hProcess);
         return false;
@@ -694,6 +753,27 @@ static int AudioRank(const std::wstring& extension) {
         return 8;
     }
     return 100;
+}
+
+static bool PlaylistIndexFromName(
+    const std::wstring& name, unsigned long long& index) {
+    size_t position = 0;
+    while (position < name.size() &&
+           name[position] >= L'0' && name[position] <= L'9') {
+        ++position;
+    }
+    if (position == 0 || position >= name.size() || name[position] != L' ') {
+        return false;
+    }
+
+    index = 0;
+    for (size_t i = 0; i < position; ++i) {
+        if (index > 100000000ULL) {
+            return false;
+        }
+        index = index * 10 + static_cast<unsigned int>(name[i] - L'0');
+    }
+    return true;
 }
 
 static std::wstring FindAudioFile(const std::wstring& directory) {
@@ -863,6 +943,16 @@ static bool BuildPlaylistEntries(
         candidates.begin(),
         candidates.end(),
         [](const Candidate& left, const Candidate& right) {
+            unsigned long long leftIndex = 0;
+            unsigned long long rightIndex = 0;
+            bool leftNumbered = PlaylistIndexFromName(FileNameOf(left.path), leftIndex);
+            bool rightNumbered = PlaylistIndexFromName(FileNameOf(right.path), rightIndex);
+            if (leftNumbered && rightNumbered && leftIndex != rightIndex) {
+                return leftIndex < rightIndex;
+            }
+            if (leftNumbered != rightNumbered) {
+                return leftNumbered;
+            }
             return left.key < right.key;
         });
 
@@ -947,7 +1037,8 @@ static bool DownloadMedia(
     }
 
     if (playlist) {
-        DeleteMatchingFiles(cacheDirectory, L"audio.*");
+        // Não reutilize arquivos de uma playlist antiga ou incompleta.
+        DeleteMatchingFiles(cacheDirectory, L"*");
     }
 
     std::wstring outputName = playlist
@@ -993,7 +1084,9 @@ static DWORD WINAPI WorkerThread(LPVOID parameter) {
     if (result->ok) {
         result->entries = entries;
     }
-    PostMessageW(job->dialog, kJobDoneMessage, 0, reinterpret_cast<LPARAM>(result));
+    if (!PostMessageW(job->dialog, kJobDoneMessage, 0, reinterpret_cast<LPARAM>(result))) {
+        delete result;
+    }
     delete job;
     return 0;
 }
@@ -1552,6 +1645,10 @@ static bool WaitForLiveAudio(LiveContext* live, std::wstring& error) {
 }
 
 static bool RunLivePipeline(LiveContext* live, std::wstring& error) {
+    if (IsLiveStopping(live)) {
+        return false;
+    }
+
     std::wstring cacheRoot = GetCacheRoot();
     if (cacheRoot.empty()) {
         error = L"Não foi possível obter a pasta temporária do Windows.";
@@ -1800,11 +1897,11 @@ static DWORD WINAPI LiveWorkerThread(LPVOID parameter) {
     return 0;
 }
 
-static void StopLiveNow() {
+static bool StopLiveNow(bool waitIndefinitely = false) {
     if (g_live == nullptr) {
         g_liveRunning = false;
         g_liveStarting = false;
-        return;
+        return true;
     }
 
     LiveContext* live = g_live;
@@ -1812,17 +1909,30 @@ static void StopLiveNow() {
         SetEvent(live->stopEvent);
     }
     TerminateLiveProcesses(live);
-    DWORD wait = WaitForSingleObject(live->thread, 15000);
-    if (wait == WAIT_OBJECT_0) {
-        CloseLiveResources(live);
-        CloseHandleIfValid(live->stopEvent);
-        CloseHandleIfValid(live->thread);
-        DeleteCriticalSection(&live->lock);
-        delete live;
+
+    EnterCriticalSection(&live->lock);
+    SOCKET listener = live->listener;
+    live->listener = INVALID_SOCKET;
+    LeaveCriticalSection(&live->lock);
+    if (listener != INVALID_SOCKET) {
+        closesocket(listener);
     }
+
+    DWORD wait = WaitForSingleObject(
+        live->thread, waitIndefinitely ? INFINITE : 15000);
+    if (wait != WAIT_OBJECT_0) {
+        return false;
+    }
+
+    CloseLiveResources(live);
+    CloseHandleIfValid(live->stopEvent);
+    CloseHandleIfValid(live->thread);
+    DeleteCriticalSection(&live->lock);
+    delete live;
     g_live = nullptr;
     g_liveRunning = false;
     g_liveStarting = false;
+    return true;
 }
 
 static void StartJob(
@@ -1836,6 +1946,9 @@ static void StartJob(
 
     g_jobRunning = true;
     g_jobEnqueue = enqueue;
+    if (g_jobStopEvent != nullptr) {
+        ResetEvent(g_jobStopEvent);
+    }
     UpdateDialogControls(dialog);
     SetStatus(
         dialog,
@@ -1862,7 +1975,7 @@ static void StartJob(
             MB_OK | MB_ICONERROR);
         return;
     }
-    CloseHandle(thread);
+    g_jobThread = thread;
 }
 
 static INT_PTR CALLBACK SettingsDialogProc(
@@ -2219,16 +2332,21 @@ static INT_PTR CALLBACK MainDialogProc(
         case IDC_LIVE:
             StartLiveFromDialog(dialog);
             return TRUE;
-        case IDC_STOP_LIVE:
+        case IDC_STOP_LIVE: {
             if (!g_liveRunning) {
                 SetStatus(dialog, L"Nenhuma transmissão ao vivo em andamento.");
                 return TRUE;
             }
             SetStatus(dialog, L"Parando a transmissão ao vivo...");
-            StopLiveNow();
+            bool stopped = StopLiveNow();
             UpdateDialogControls(dialog);
-            SetStatus(dialog, L"Transmissão ao vivo parada.");
+            SetStatus(
+                dialog,
+                stopped
+                    ? L"Transmissão ao vivo parada."
+                    : L"Não foi possível encerrar a transmissão. Tente novamente.");
             return TRUE;
+        }
         case IDC_SETTINGS_BTN:
             ShowSettings(dialog);
             return TRUE;
@@ -2264,6 +2382,7 @@ static INT_PTR CALLBACK MainDialogProc(
 
     case kJobDoneMessage: {
         JobResult* result = reinterpret_cast<JobResult*>(lParam);
+        CloseHandleIfValid(g_jobThread);
         if (!g_jobRunning) {
             delete result;
             return TRUE;
@@ -2362,10 +2481,14 @@ static LRESULT CALLBACK WinampWindowProc(
                 MB_OK | MB_ICONINFORMATION);
             return 0;
         }
-        StopLiveNow();
+        bool stopped = StopLiveNow();
         if (g_mainDialog != nullptr) {
             UpdateDialogControls(g_mainDialog);
-            SetStatus(g_mainDialog, L"Transmissão ao vivo parada.");
+            SetStatus(
+                g_mainDialog,
+                stopped
+                    ? L"Transmissão ao vivo parada."
+                    : L"Não foi possível encerrar a transmissão. Tente novamente.");
         }
         return 0;
     }
@@ -2482,6 +2605,7 @@ static int Init() {
     if (WSAStartup(MAKEWORD(2, 2), &winsockData) == 0) {
         g_winsockReady = true;
     }
+    g_jobStopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 
     if (g_winamp != nullptr) {
         g_oldWndProc = reinterpret_cast<WNDPROC>(
@@ -2503,7 +2627,20 @@ static void Config() {
 }
 
 static void Quit() {
-    StopLiveNow();
+    if (g_jobStopEvent != nullptr) {
+        SetEvent(g_jobStopEvent);
+    }
+    if (g_jobThread != nullptr) {
+        if (WaitForSingleObject(g_jobThread, 30000) == WAIT_OBJECT_0) {
+            CloseHandleIfValid(g_jobStopEvent);
+        }
+        CloseHandleIfValid(g_jobThread);
+        g_jobRunning = false;
+    } else {
+        CloseHandleIfValid(g_jobStopEvent);
+    }
+
+    StopLiveNow(true);
     if (g_winsockReady) {
         WSACleanup();
         g_winsockReady = false;
