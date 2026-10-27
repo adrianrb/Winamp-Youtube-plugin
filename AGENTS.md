@@ -18,18 +18,23 @@ suite, or service layer.
   edit.
 - `build.bat` — MSVC; must be run from the **x86** Native Tools prompt.
 - `build.sh` — MinGW cross-compile; defaults to `i686-w64-mingw32-*`.
-- `CMakeLists.txt` — alternative build; still must target 32-bit Windows.
+- `CMakeLists.txt`, `cmake/BumpVersion.cmake` — alternative build; still must
+  target 32-bit Windows.
+- `version.txt` — single source of truth for `X.Y.Z`; successful builds bump `Z`
+  unless `--no-bump` / `GEN_YOUTUBE_NO_BUMP=ON` is used.
 
 ## Commands
 
 ```sh
 ./build.sh
+./build.sh --no-bump
 # or
 CXX=/path/i686-w64-mingw32-g++ RC=/path/i686-w64-mingw32-windres ./build.sh
 ```
 
 ```bat
 build.bat
+build.bat --no-bump
 ```
 
 Output: `build/gen_youtube.dll`. Verify with `file build/gen_youtube.dll`; it must
@@ -68,11 +73,15 @@ say PE32 (DLL), Intel i386. An x64 DLL silently will not load in Winamp.
   thread.
 - Source and `.rc` strings are UTF-8; keep `/utf-8` (MSVC), `--codepage=65001`
   (windres) or the `#pragma code_page` when editing resources.
+- `version.txt` must stay strict `X.Y.Z` (no leading zeros or `v` prefix).
+  Successful builds bump `Z`; failed builds leave it untouched. Never bump it by
+  hand per build — only change `X`/`Y` for a new minor/major.
 
 ## Verification
 
 There are no automated tests. Minimum check after changes: cross-compile with
 `./build.sh`, confirm `file` reports a PE32 i386 DLL, and confirm the exported
 symbol with `llvm-objdump -p` (or `dumpbin /exports`); the import list should
-include `WS2_32.dll` for live support. Runtime behavior requires manual testing in
-Winamp on Windows.
+include `WS2_32.dll` for live support. A successful build also increments the
+patch in `version.txt` (use `--no-bump` when verifying without changing it).
+Runtime behavior requires manual testing in Winamp on Windows.

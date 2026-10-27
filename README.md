@@ -83,6 +83,15 @@ As preferências ficam em `gen_youtube.ini`, na pasta de configuração do Winam
 Os logs da transmissão ao vivo ficam em
 `%TEMP%\WinampYouTube\live-<hash do link>`.
 
+## Versão
+
+`version.txt` guarda a versão no formato `X.Y.Z`. Cada build bem-sucedido
+incrementa o patch (`Z`). Para mudar `X` ou `Y`, edite o arquivo manualmente
+(por exemplo, `0.2.0`).
+
+Use `./build.sh --no-bump`, `build.bat --no-bump` ou
+`-DGEN_YOUTUBE_NO_BUMP=ON` no CMake para compilar sem incrementar a versão.
+
 ## Build
 
 ### MinGW (cross-compile)
