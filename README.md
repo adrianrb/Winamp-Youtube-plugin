@@ -71,6 +71,30 @@ O `ffmpeg.exe` é obrigatório para transmissão ao vivo. A transmissão continu
 ativa depois que a janela do plugin fecha; use **Parar ao vivo** ou o menu do
 Winamp para encerrá-la.
 
+## Capturas de tela
+
+Capturas feitas com a interface clássica do Winamp 5.666; a skin moderna
+original foi restaurada depois. Veja também
+[`docs/screenshots/README.md`](docs/screenshots/README.md).
+
+### Instalação e configuração
+
+![gen_youtube.dll na pasta Plugins](docs/screenshots/install-plugins-folder.png)
+
+![gen_youtube.ini na pasta do Winamp](docs/screenshots/install-config-file.png)
+
+![Preferências: General Purpose com YouTube no Winamp](docs/screenshots/preferences-general-purpose.png)
+
+![Configurações do yt-dlp e ffmpeg](docs/screenshots/settings-ytdlp-ffmpeg.png)
+
+### Uso
+
+![Diálogo Abrir link do YouTube](docs/screenshots/open-youtube-link.png)
+
+![Playlist em execução](docs/screenshots/playlist-playing.png)
+
+![Winamp Classic tocando](docs/screenshots/winamp-classic-playing.gif)
+
 ## Configurações
 
 O botão **Configurações...** permite:
